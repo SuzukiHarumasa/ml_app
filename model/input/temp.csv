@@ -1,0 +1,6 @@
+,Type,MunicipalityCode,Prefecture,Municipality,DistrictName,TradePrice,FloorPlan,Area,BuildingYear,Structure,Use,Purpose,CityPlanning,CoverageRatio,FloorAreaRatio,Period,Renovation,Region,LandShape,Frontage,TotalFloorArea,Direction,Classification,Breadth,PricePerUnit,UnitPrice,Remarks
+0,中古マンション等,13101,東京都,千代田区,飯田橋,40000000,１ＬＤＫ,30,平成25年,ＲＣ,住宅,住宅,商業地域,80.0,500.0,2019年第３四半期,未改装,,,,,,,,,,
+1,中古マンション等,13101,東京都,千代田区,飯田橋,130000000,３ＬＤＫ,80,平成19年,ＲＣ,,その他,商業地域,80.0,500.0,2019年第３四半期,改装済,,,,,,,,,,
+2,宅地(土地と建物),13101,東京都,千代田区,飯田橋,400000000,,110,平成30年,鉄骨造,事務所、店舗,店舗,商業地域,80.0,500.0,2019年第２四半期,,商業地,台形,9.0,260,北西,区道,4.0,,,
+3,宅地(土地と建物),13101,東京都,千代田区,飯田橋,180000000,,50,昭和51年,ＲＣ,共同住宅、事務所,,商業地域,80.0,700.0,2019年第２四半期,,商業地,長方形,5.2,260,南西,都道,27.0,,,
+4,中古マンション等,13101,東京都,千代田区,飯田橋,100000000,２ＬＤＫ,65,平成19年,ＲＣ,住宅,住宅,商業地域,80.0,500.0,2019年第２四半期,改装済,,,,,,,,,,
