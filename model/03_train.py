@@ -1,9 +1,10 @@
 from sklearn.pipeline import Pipeline
-from pipeline import Date2Int, ToCategorical
 import pandas as pd
 import pickle
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
+from pipeline import Date2Int, ToCategorical
+
 
 # データ読み込み
 df = pd.read_csv("input/basic_data.csv")
@@ -21,11 +22,23 @@ X = preprocess.transform(X)
 
 # データを分割
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.33, random_state=42)
+    X, y, test_size=0.2, random_state=42)
 
 # 学習
-model = lgb.LGBMRegressor(n_estimators=100_000)
+params = {
+    "n_estimators": 100_000,
+    "min_child_samples": 15,
+    "max_depth": 4,
+    "colsample_bytree": 0.7,
+    "random_state": 42
+}
+model = lgb.LGBMRegressor(**params)
+model.fit(X_train, y_train,
+          eval_metric="rmse",
+          eval_set=[(X_test, y_test)],
+          early_stopping_rounds=100)
+print("best scores:", dict(model.best_score_["valid_0"]))
 
-
-
-X = Date2Int().transform(X)
+# 保存
+pickle.dump(preprocess, open("preprocess.pkl", "wb"))
+pickle.dump(model, open("model.pkl", "wb"))

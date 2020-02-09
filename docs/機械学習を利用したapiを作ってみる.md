@@ -49,6 +49,7 @@ APIで提供する機能は「機械学習による予測」としておきま�
 
 ```json
 {
+    "status": "OK",
     "preidcted": 40000000
 }
 ```
@@ -247,7 +248,62 @@ unix時間にすると桁数が増えて使用メモリが増えるんですが�
 
 
 
+## 学習
 
+前処理して，学習して，前処理パイプラインと予測モデルをpickleで保存します。
+
+```python
+from sklearn.pipeline import Pipeline
+from pipeline import Date2Int, ToCategorical
+import pandas as pd
+import pickle
+import lightgbm as lgb
+from sklearn.model_selection import train_test_split
+
+# データ読み込み
+df = pd.read_csv("input/basic_data.csv")
+y = df["price"]
+X = df.drop("price", axis=1)
+
+# 前処理パイプラインの定義
+preprocess = Pipeline(steps=[
+    ("date_to_int", Date2Int(target_col="trade_date")),
+    ("to_category", ToCategorical(target_col="address"))
+], verbose=True)
+
+# 前処理
+X = preprocess.transform(X)
+
+# データを分割
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42)
+
+# 学習
+params = {
+    "n_estimators": 100_000,
+    "min_child_samples": 15,
+    "max_depth": 4,
+    "colsample_bytree": 0.7,
+    "random_state": 42
+}
+model = lgb.LGBMRegressor(**params)
+model.fit(X_train, y_train,
+          eval_metric="rmse",
+          eval_set=[(X_test, y_test)],
+          early_stopping_rounds=100)
+print("best scores:", dict(model.best_score_["valid_0"]))
+
+# 保存
+pickle.dump(preprocess, open("preprocess.pkl", "wb"))
+pickle.dump(model, open("model.pkl", "wb"))
+
+```
+
+testデータに対するRMSEが1950万円くらいあります。これほど少ない特徴量だとさすがにひどい精度になりますね。
+
+```
+best scores: {'rmse': 19500026.074094355, 'l2': 380251016890359.75}
+```
 
 
 
@@ -258,6 +314,167 @@ unix時間にすると桁数が増えて使用メモリが増えるんですが�
 [^1]: 参考：[sklearnのpipelineに自分で定義した関数を流し込む - Qiita](https://qiita.com/kazetof/items/fcfabfc3d737a8ff8668)
 
 
+
+
+
+# APIを作る
+
+## テストを書く
+
+### 作るものを決める
+
+これから作るAPIは，予測したい物件の特徴量を
+
+```json
+{
+    "address": "東京都千代田区",
+    "area": 30,
+    "building_year": 2013
+}
+```
+
+のようにJSONにして送ると，
+
+```json
+{
+    "status": "OK",
+    "preidcted": 40000000
+}
+```
+
+のようなJSONの値を返すAPIとします。
+
+### テストを書く
+
+```python
+import unittest
+import requests
+import json
+
+
+class APITest(unittest.TestCase):
+    URL = "http://localhost:5000/api/predict"
+    DATA = {
+        "address": "東京都千代田区",
+        "area": 30,
+        "building_year": 2013
+    }
+
+    def test_normal_input(self):
+        # リクエストを投げる
+        response = requests.post(self.URL, json=self.DATA)
+        # 結果
+        print(response.text)  # 本来は不要だが，確認用
+        result = json.loads(response.text)  # JSONをdictに変換
+        # ステータスコードが200かどうか
+        self.assertEqual(response.status_code, 200)
+        # statusはOKかどうか
+        self.assertEqual(result["status"], "OK")
+        # 非負の予測値があるかどうか
+        self.assertTrue(0 <= result["predicted"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+```
+
+※あくまで例です。実際にちゃんと作るときはもっと沢山（正常系だけでなく異常系も）テストケースを作ります。
+
+
+
+## Flaskでアプリを作成
+
+[Flask](https://a2c.bitbucket.io/flask/quickstart.html)はPythonの軽量なWebフレームワーク（Webアプリを簡単に作ることができるライブラリ）で，極めて少ないコード量でアプリを作ることができます。
+
+「機械学習モデルを動かすだけ」みたいな単純な動作をするAPIには最適なフレームワークです。
+
+以下のように書いていきます。
+
+```python
+from flask import Flask, request, jsonify, abort
+import pandas as pd
+import pickle
+from datetime import datetime
+import sys
+sys.path.append("./model")  # 前処理で使った自作モジュール「pipeline」を読み込むためPYTHONPATHに追加
+app = Flask(__name__)
+
+# アプリ起動時に前処理パイプラインと予測モデルを読み込んでおく
+preprocess = pickle.load(open("model/preprocess.pkl", "rb"))
+model = pickle.load(open("model/model.pkl", "rb"))
+
+
+@app.route('/api/predict', methods=["POST"])
+def predict():
+    """/api/predict にPOSTリクエストされたら予測値を返す関数"""
+    try:
+        # APIにJSON形式で送信された特徴量
+        X = pd.DataFrame(request.json, index=[0])
+        # 特徴量を追加
+        X["trade_date"] = datetime.now()
+        # 前処理
+        X = preprocess.transform(X)
+        # 予測
+        y_pred = model.predict(X, num_iteration=model.best_iteration_)
+        response = {"status": "OK", "predicted": y_pred[0]}
+        return jsonify(response), 200
+    except Exception as e:
+        print(e)  # デバッグ用
+        abort(400)
+
+
+@app.errorhandler(400)
+def error_handler(error):
+    """abort(400) した時のレスポンス"""
+    response = {"status": "Error", "message": "Invalid Parameters"}
+    return jsonify(response), error.code
+
+
+if __name__ == "__main__":
+    app.run(debug=True)  # 開発用サーバーの起動
+
+```
+
+前節で書いたテストを走らせるとこうなります
+
+```sh
+$ python3 api_test.py 
+{
+  "predicted": 45833222.1903707, 
+  "status": "OK"
+}
+
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.015s
+
+OK
+```
+
+期待通り，predictedとstatusが返っているようです。
+
+
+
+
+
+## uWSGIサーバの設定
+
+
+
+## EC2にデプロイ
+
+
+
+
+
+
+
+
+
+# フロントエンドを作る
+
+Vueのれんしゅう
 
 
 
