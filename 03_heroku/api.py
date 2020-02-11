@@ -7,8 +7,8 @@ sys.path.append("./modules")  # 前処理で使った自作モジュール「pip
 app = Flask(__name__)
 
 # アプリ起動時に前処理パイプラインと予測モデルを読み込んでおく
-preprocess = pickle.load(open("model/preprocess.pkl", "rb"))
-model = pickle.load(open("model/model.pkl", "rb"))
+preprocess = pickle.load(open("modules/preprocess.pkl", "rb"))
+model = pickle.load(open("modules/model.pkl", "rb"))
 
 
 @app.route('/api/predict', methods=["POST"])

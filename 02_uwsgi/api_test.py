@@ -4,7 +4,7 @@ import json
 
 
 class APITest(unittest.TestCase):
-    URL = "http://localhost:5000/api/predict"
+    URL = "http://localhost/api/predict"
     DATA = {
         "address": "東京都千代田区",
         "area": 30,

@@ -452,23 +452,7 @@ OK
 
 
 
-# Herokuにデプロイ
-
-PaaS（Platform as a Service）を使うと簡単にデプロイできるらしいので使ってみます。
-
-[Python | Heroku Dev Center](https://devcenter.heroku.com/categories/python-support)
-
-WSGI（Web Server Gateway Interface）という，WebサーバとWebアプリを接続するインターフェースとなるライブラリを入れます
-
-
-
-
-
-
-
-# EC2にデプロイ
-
-## uWSGIサーバの設定
+# uWSGIの設定
 
 Flask.run()で動くサーバは
 
@@ -477,7 +461,172 @@ Flask.run()で動くサーバは
 
 とWarningが出力される通り，あくまで開発用らしいので
 
-本番運用に耐えるuWSGIサーバを使います。
+デプロイできるようにWSGIサーバを用意します。
+
+選択肢は色々あるようですが，今回はuWSGIを使ってみます。
+
+
+
+### インストール
+
+公式ドキュメントに従ってpipから入れます。
+
+[Quickstart for Python/WSGI applications — uWSGI 2.0 documentation](https://uwsgi-docs.readthedocs.io/en/latest/WSGIquickstart.html#installing-uwsgi-with-python-support)
+
+```sh
+sudo apt install build-essential python-dev
+sudo pip3 install uwsgi
+```
+
+
+
+### 起動テスト
+
+以下のようにして起動します。
+
+```sh
+sudo uwsgi --module=api --callable=app --http-socket=0.0.0.0:80
+```
+
+ここで，`--module`の部分には，flaskのアプリが入ったpythonスクリプトのファイル名を指定してください（ここでは`api.py`としています）
+
+
+
+### 設定をファイルに記述する
+
+起動時のオプションの指定が面倒なので設定ファイルに記述します。
+
+任意の名前のiniファイル（ここでは`uwsgi.ini`とします）を作り，以下のような感じに設定します。
+
+```ini
+[uwsgi]
+# WSGI moduleをロード（アプリの.pyファイル名を指定する）
+module = api
+
+# set default WSGI callable name
+callable = app
+
+# HTTPの80番ポートを使う
+http-socket = 0.0.0.0:80
+
+# worker/processの数
+processes = 4
+
+# 各workerのスレッド数
+threads = 2
+
+# master processにする
+master = true
+
+# logを有効化
+logto = ./uwsgi.log  
+
+# pidをファイルに入れておく
+pidfile = ./uwsgi.pid  
+
+# SIGTERMとSIGQUITの意味を反転させる
+die-on-term = true
+
+# memory-reportを有効化
+memory-report = true
+
+```
+
+### 起動
+
+このiniファイルを読み込んで起動します。
+
+```sh
+sudo uwsgi --ini uwsgi.ini &
+```
+
+（logtoを指定している場合，uwsgiからの出力は基本的にlogファイルに行くのでバックグラウンドプロセスとして起動したほうが扱いやすいので`&`をつけています。）
+
+logについては，logの表示用のターミナルをもう一つ用意して，
+
+```sh
+tail -f uwsgi.log
+```
+
+とすると監視しやすいです。
+
+### リロードと停止
+
+pythonファイルやiniファイルを更新した場合は，アプリをリロードしないと反映されません。リロードはpidfileを使って以下のように行います。
+
+```sh
+sudo uwsgi --reload uwsgi.pid
+```
+
+停止する場合も同様にpidfileを用います。
+
+```sh
+sudo uwsgi --stop uwsgi.pid
+```
+
+ちゃんと停止したかどうかを確認するには
+
+```sh
+ps aux | grep uwsgi
+```
+
+のようにして動作中のプロセスを確認すると良いと思います。
+
+
+
+
+
+# Herokuにデプロイ
+
+PaaS（Platform as a Service）を使うと簡単にデプロイできるらしいので，Herokuを使ってみます。
+
+[Python | Heroku Dev Center](https://devcenter.heroku.com/categories/python-support)
+
+
+
+### Herokuの準備
+
+1. [Heroku](https://jp.heroku.com/)の会員登録を行います。
+2. [Heroku Dev Center](https://devcenter.heroku.com/articles/getting-started-with-python#set-up)でHeroku CLIをダウンロードします。
+
+
+
+### uWSGIを設定
+
+[ドキュメント](https://uwsgi-docs.readthedocs.io/en/latest/tutorials/heroku_python.html)を参考に，herokuに向けた設定を行います。
+
+uWSGIの設定ファイルを以下のように変更or追記します。
+
+```ini
+http-socket = :$(PORT)
+die-on-term = true
+```
+
+
+
+### Herokuへデプロイ
+
+Webアプリがおいてある場所をGitのリポジトリにし，`git add .`でアプリを追跡しておきます。
+
+```sh
+heroku create
+```
+
+でHerokuにアプリをつくります。
+
+
+
+
+
+
+
+
+
+
+
+
+
+# EC2にデプロイ
 
 
 
