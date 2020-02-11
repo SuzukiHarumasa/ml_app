@@ -19,7 +19,7 @@ APIで提供する機能は「機械学習による予測」としておきま�
 
 
 
-## APIで送信する特徴量
+## APIに送信する特徴量
 
 以下の特徴量を送ることにします。
 
@@ -452,22 +452,40 @@ OK
 
 
 
-# デプロイ
+# Herokuにデプロイ
+
+PaaS（Platform as a Service）を使うと簡単にデプロイできるらしいので使ってみます。
+
+[Python | Heroku Dev Center](https://devcenter.heroku.com/categories/python-support)
+
+WSGI（Web Server Gateway Interface）という，WebサーバとWebアプリを接続するインターフェースとなるライブラリを入れます
 
 
 
-## EC2にデプロイ
 
-### uWSGIサーバの設定
+
+
+
+# EC2にデプロイ
+
+## uWSGIサーバの設定
 
 Flask.run()で動くサーバは
 
 >    WARNING: This is a development server. Do not use it in a production deployment.
 >    Use a production WSGI server instead.
 
-とWarningが出力される通り，よくないらしいので
+とWarningが出力される通り，あくまで開発用らしいので
 
 本番運用に耐えるuWSGIサーバを使います。
+
+
+
+
+
+
+
+
 
 
 
