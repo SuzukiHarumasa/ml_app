@@ -11,11 +11,6 @@ preprocess = pickle.load(open("modules/preprocess.pkl", "rb"))
 model = pickle.load(open("modules/model.pkl", "rb"))
 
 
-@app.route('/')
-def index():
-    return "Hello World"
-
-
 @app.route('/api/predict', methods=["POST"])
 def predict():
     """/api/predict にPOSTリクエストされたら予測値を返す関数"""
