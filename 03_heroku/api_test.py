@@ -4,7 +4,7 @@ import json
 
 
 class APITest(unittest.TestCase):
-    URL = "http://localhost/api/predict"
+    URL = "https://fierce-anchorage-78564.herokuapp.com/api/predict"
     DATA = {
         "address": "東京都千代田区",
         "area": 30,

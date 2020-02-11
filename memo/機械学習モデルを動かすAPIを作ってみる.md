@@ -506,6 +506,9 @@ module = api
 # set default WSGI callable name
 callable = app
 
+# スレッドごとにアプリ全体を読み込む（メモリ消費は増えるが，これを設定しないとLGBMが動かない）
+lazy-apps = true
+
 # HTTPの80番ポートを使う
 http-socket = 0.0.0.0:80
 
@@ -514,9 +517,6 @@ processes = 4
 
 # 各workerのスレッド数
 threads = 2
-
-# master processにする
-master = true
 
 # logを有効化
 logto = ./uwsgi.log  
@@ -588,6 +588,11 @@ PaaS（Platform as a Service）を使うと簡単にデプロイできるらし�
 
 1. [Heroku](https://jp.heroku.com/)の会員登録を行います。
 2. [Heroku Dev Center](https://devcenter.heroku.com/articles/getting-started-with-python#set-up)でHeroku CLIをダウンロードします。
+3. CLIでログインしておきます。
+
+```sh
+heroku login
+```
 
 
 
@@ -595,24 +600,112 @@ PaaS（Platform as a Service）を使うと簡単にデプロイできるらし�
 
 [ドキュメント](https://uwsgi-docs.readthedocs.io/en/latest/tutorials/heroku_python.html)を参考に，herokuに向けた設定を行います。
 
-uWSGIの設定ファイルを以下のように変更or追記します。
+uWSGIの設定ファイルを以下のように変更します。
 
 ```ini
+[uwsgi]
+# WSGI moduleをロード（アプリの.pyファイル名）
+module = api
+
+# set default WSGI callable name
+callable = app
+
+# スレッドごとにアプリ全体を読み込む（メモリ消費は増えるが，これを設定しないとLGBMが動かない）
+lazy-apps = true
+
+# heroku用のポートを使う
 http-socket = :$(PORT)
+
+# SIGTERMとSIGQUITの意味を反転させる
 die-on-term = true
+
+# memory-reportを有効化
+memory-report = true
+
+```
+
+
+
+### 必要なファイルを作成
+
+`Procfile`（heroku上で実行されるコマンドを記述するファイル）を作成します。
+
+```
+web: uwsgi uwsgi.ini
+```
+
+`runtime.txt`を作成し，中にプログラミング言語とバージョンを入れておきます
+
+```
+python-3.8.1
+```
+
+`requirements.txt`を作成しておき，アプリに必要なライブラリを書いておきます。
+
+```
+pandas
+scikit-learn
+lightgbm
+flask
+uwsgi
 ```
 
 
 
 ### Herokuへデプロイ
 
-Webアプリがおいてある場所をGitのリポジトリにし，`git add .`でアプリを追跡しておきます。
+Webアプリがおいてある場所をGitのリポジトリにし，追跡してコミットしておきます。
+
+```sh
+git init
+git add .
+git commit -m "first commit"
+```
+
+Herokuにアプリをつくります。
 
 ```sh
 heroku create
 ```
 
-でHerokuにアプリをつくります。
+Herokuにプッシュします。
+
+```sh
+git push heroku master
+```
+
+
+
+### アプリを確認
+
+```sh
+heroku open
+```
+
+でデプロイしたアプリをブラウザで開いてくれるので，アプリのURLを確認できます。
+
+以前作成したAPIのunittestのURL部分をデプロイしたアプリのURLに書き換えて，テストをしてみます
+
+```sh
+$ python3 api_test.py
+{"predicted":45833222.1903707,"status":"OK"}
+
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.833s
+
+OK
+```
+
+無事に結果が返ってきました。
+
+herokuのlogを
+
+```
+ heroku logs --tail
+```
+
+で見ても，POSTリクエストに対応したことが確認できました。
 
 
 
