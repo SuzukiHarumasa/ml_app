@@ -711,7 +711,302 @@ herokuのlogを
 
 
 
+# chaliceでLambdaにデプロイ
 
+![Chalice Logo](https://camo.githubusercontent.com/fb6635f6e1ec64883c492ae86ec5bc75a13d8bd9/68747470733a2f2f6368616c6963652e72656164746865646f63732e696f2f656e2f6c61746573742f5f696d616765732f6368616c6963652d6c6f676f2d776869746573706163652e706e67)
+
+[chalice](https://github.com/aws/chalice)を使ってAWS Lambda + API Gatewayでデプロイしていきます。
+
+chaliceはAWS謹製のライブラリで，Flaskライクな文法でWebアプリを作ることができ，コマンド一つでLambda + API Gatewayの構成でデプロイすることができます。
+
+
+
+## chaliceのセットアップ
+
+インストール
+
+```bash
+pip3 install chalice
+```
+
+プロジェクトの作成
+
+```bash
+chalice new-project <project_name>
+```
+
+プロジェクトを作成すると，`app.py`と`requirements.txt`の入ったディレクトリが作られるので，そちらに移動して`app.py`を書き換えていきます。
+
+
+
+## app.pyの書き換え
+
+最初はこんな感じになってます。
+
+```python
+from chalice import Chalice
+
+app = Chalice(app_name='project_name')
+
+@app.route('/')
+def index():
+    return {'hello': 'world'}
+```
+
+これを以下のように書き換えます。
+
+```python
+from chalice import Chalice, Response
+import pandas as pd
+import pickle
+from datetime import datetime
+import sys
+import json
+sys.path.append("./modules")  # 前処理で使った自作モジュール「pipeline」を読み込むためPYTHONPATHに追加
+app = Chalice(app_name='with_chalice')
+
+
+# アプリ起動時に前処理パイプラインと予測モデルを読み込んでおく
+preprocess = pickle.load(open("modules/preprocess.pkl", "rb"))
+model = pickle.load(open("modules/model.pkl", "rb"))
+
+
+@app.route('/predict', methods=["POST"])
+def predict():
+    """/predict にPOSTリクエストされたら予測値を返す関数"""
+    try:
+        # APIにJSON形式で送信された特徴量
+        request = app.current_request
+        X = pd.DataFrame(request.json_body, index=[0])
+        # 特徴量を追加
+        X["trade_date"] = datetime.now()
+        # 前処理
+        X = preprocess.transform(X)
+        # 予測
+        y_pred = model.predict(X, num_iteration=model.best_iteration_)
+        response = {"status": "OK", "predicted": y_pred[0]}
+        return Response(body=json.dumps(response),
+                        headers={'Content-Type': 'application/json'},
+                        status_code=200)
+    except Exception as e:
+        print(e)  # デバッグ用
+        response = {"status": "Error", "message": "Invalid Parameters"}
+        return Response(body=json.dumps(response),
+                        headers={'Content-Type': 'application/json'},
+                        status_code=400)
+
+```
+
+
+
+## requirements.txtは空のままで
+
+機械学習モデル部分で使用しているライブラリを載せるんですが，Lambda関数に含めることができるのは50MBまでなので，LightGBM（とその依存ライブラリ）だけで超過します。
+
+なのでライブラリは後述するLayerという仕組みを使って別のルートからアップロードすることにし，requirements.txtはそのままにします。
+
+
+
+## ローカルでテスト
+
+```
+chalice local
+```
+
+でlocalhost:8000にサーバーが起動するのでPOSTリクエストを投げてテストします。
+
+（存在しないURLにリクエストを投げたときにNot Foundじゃなく`{"message":"Missing Authentication Token"}`が返ってくるというややミスリーディングな仕様なのでご注意を）
+
+```bash
+$ python3 api_test.py 
+{"status": "OK", "predicted": 45833222.1903707}
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.064s
+
+OK
+```
+
+ローカルで問題なく動くようであればデプロイしていきます。
+
+
+
+## AWS Credentials
+
+deployの前にAWSの資格情報を編集します。
+
+アクセスキーはAWSコンソールのセキュリティ資格情報のところで作成します。
+
+```bash
+$mkdir ~/.aws
+$ cat >> ~/.aws/config
+[default]
+aws_access_key_id=YOUR_ACCESS_KEY_HERE
+aws_secret_access_key=YOUR_SECRET_ACCESS_KEY
+region=YOUR_REGION (such as us-west-2, us-west-1, etc)
+```
+
+
+
+## LambdaのLayerにパッケージを追加する
+
+LightGBM, scikit-learnなどの外部ライブラリをrequirements.txtに記述してchaliceのデプロイ時にアップロードさせる方法（直接アップロード）では，圧縮済みファイルで50MBが上限となります。
+
+Numpy, Scipy, Pandas, LightGBM, Scikit-learnなどを使っている今回のプロジェクトは50MB以下に収まらないので，直接アップロードはできません。
+
+しかし，[ここ](https://docs.aws.amazon.com/ja_jp/lambda/latest/dg/limits.html)を見ると，直接アップロードなら50MBが上限でも，Layerから読み込む方法なら解凍時で250MBまでは使えるようです。
+
+なので，lambda関数にまとめるのではなく，Layerとして別口でアップロードしておき，Lambda関数から読み込ませるようにします。
+
+以下の記事を参考にしてLayerを作っていきます。
+
+- [pandasをLambdaのLayerとして追加する - Qiita](https://qiita.com/thimi0412/items/4c725ec2b26aef59e5bd)
+- [Python の AWS Lambda デプロイパッケージ - AWS Lambda](https://docs.aws.amazon.com/ja_jp/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html)
+
+
+
+### 1. Amazon Linux2 OSのEC2インスタンスを立ち上げ，sshで接続します
+   - コンパイラ言語を利用しているライブラリはLambda（2019年からAmazon Linux2で動いている）と同じOSでインストールしたライブラリを使う必要があるようです
+     （[Python3.7ランタイムのAWS LambdaでC拡張ライブラリを使用したい！ - Qiita](https://qiita.com/rkhcx/items/999fe28b541334cd8464)）
+   - コンパイラ言語を使用していないライブラリ（例：tqdm）ならEC2じゃない場所で以下の2~4の作業を行えば大丈夫です。
+
+
+
+### 2. pip installしてzipにする
+
+```bash
+# python3のインストール
+sudo yum update -y
+sudo yum install python3-devel python3-libs python3-setuptools -y
+sudo python3 -m pip install --upgrade pip
+
+# numpyのzip化 -------------
+mkdir python
+pip3 install -t ./python/ numpy
+zip -r numpy.zip python
+rm -r python
+
+# scipyのzip化 -------------
+mkdir python
+pip3 install -t ./python/ scipy
+# numpyは別Layerにするので消す
+rm -r ./python/numpy*
+zip -r scipy.zip python
+rm -r python
+
+# pandasのzip化 ------------
+mkdir python
+pip3 install -t ./python/ pandas==0.25.3
+# numpyは別Layerにするので消す
+rm -r ./python/numpy*
+zip -r pandas.zip python
+rm -r python
+
+# sklearnのzip化 -----------
+mkdir python
+pip3 install -t ./python/ sklearn
+# numpy, scipyは別Layerにするので消す
+rm -r ./python/numpy* ./python/scipy*
+zip -r sklearn.zip python
+rm -r python
+
+# lightgbmのzip化 ----------
+mkdir python
+pip3 install -t ./python/ --no-deps lightgbm
+zip -r lightgbm.zip python
+rm -r python
+
+```
+
+
+
+### 3. zipをダウンロード
+
+```
+exit
+```
+
+でEC2を抜けたら
+
+```
+scp -i ~/.ssh/[pemファイル名].pem ec2-user@[IPv4]:~/*.zip .
+```
+
+のような感じでローカルにダウンロードします。
+
+
+
+### 4. zipをアップロード
+
+- AWSコンソール→Lambda→Layer→「レイヤーの作成」からzipをアップロードします
+
+   - レイヤー名はpythonコードでimportするときの名前にします
+
+
+
+### 5. Layerの追加
+
+AWSコンソールのLambda関数の画面から，作成中のAPIの関数に先程作成したLayerを追加します。
+
+
+
+## ソースコード以外のデプロイしたいファイルはvendorに入れる
+
+chaliceでdeployしたいファイルが有る場合は`vendor`というディレクトリを作って入れる必要があります（[Chalice documentation](https://chalice.readthedocs.io/en/latest/topics/packaging.html)）。
+
+今回は予測モデルのpklファイルを入れていた`modules`というディレクトリを`vendor`に入れます
+
+```bash
+mkdir vendor
+cp -r modules/ vendor/
+```
+
+
+
+## デプロイする
+
+ようやくデプロイです！
+
+```bash
+chalice deploy
+```
+
+
+
+## 動作確認
+
+LambdaのURLにPOSTリクエストを投げて確認します。
+
+```bash
+$ python3 api_test.py
+{"status": "OK", "predicted": 45833222.1903707}
+.
+----------------------------------------------------------------------
+Ran 1 test in 3.051s
+
+OK
+```
+
+ちゃんと動作しているようです。
+
+
+
+# Lambdaにデプロイ
+
+## ライブラリ関係
+
+現在のAPIは以下のようなライブラリを使っております
+
+| 名前     | サイズ | 使用理由       |
+| -------- | ------ | -------------- |
+| lightgbm | 約4MB  | 予測に利用     |
+| sklearn  | 約27MB | LightGBMの依存 |
+| numpy    | 約77MB | LightGBMの依存 |
+| scipy    | 約86MB | LightGBMの依存 |
+| pandas   | 約43MB | 前処理で使用   |
+| flask    | 約5MB  | API作成に利用  |
+
+AWS Lambdaでこういう外部ライブラリをLayerから読み込む場合，250MBが上限になるのですが，scipy, numpyが重いのでflaskを含めてちょうど250MBくらいになります。
 
 
 
@@ -720,6 +1015,10 @@ herokuのlogを
 
 
 # EC2にデプロイ
+
+
+
+
 
 
 

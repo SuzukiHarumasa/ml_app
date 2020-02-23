@@ -2,7 +2,7 @@
 
 
 
-## 各フォルダの説明
+## 各フォルダの概要
 
 ### 01_make_api
 
@@ -12,5 +12,39 @@
 
 ### 02_uwsgi
 
-uWSGIサーバを用意しただけ。
+uWSGIサーバを設定するところまで
+
+
+
+### 03_heroku
+
+Herokuにデプロイする場合のファイル構成
+
+（実際のデプロイ時は中にHeroku用のGitサブリポジトリを作る）
+
+
+
+### 04_lambda
+
+AWS lambda + API Gatewayでのデプロイ
+
+- with_chalice
+  - chaliceでお手軽？デプロイ
+    （アプリ部分をFlaskからChaliceに書き換えることになるので言うほどお手軽かというと…）
+- with_flask
+  - Flaskでデプロイする
+
+
+
+### 05_fargate
+
+AWS Fargate + ECS
+
+
+
+### 06_EC2
+
+AWS EC2 + ELB + AutoScaling
+
+
 
