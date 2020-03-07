@@ -865,7 +865,7 @@ Numpy, Scipy, Pandas, LightGBM, Scikit-learnなどを使っている今回のプ
 
 
 
-### 1. Amazon Linux2 OSのEC2インスタンスを立ち上げ，sshで接続します
+### 1. Amazon Linux2 OSのEC2インスタンスを立ち上げ，sshで接続する
    - コンパイラ言語を利用しているライブラリはLambda（2019年からAmazon Linux2で動いている）と同じOSでインストールしたライブラリを使う必要があるようです
      （[Python3.7ランタイムのAWS LambdaでC拡張ライブラリを使用したい！ - Qiita](https://qiita.com/rkhcx/items/999fe28b541334cd8464)）
    - コンパイラ言語を使用していないライブラリ（例：tqdm）ならEC2じゃない場所で以下の2~4の作業を行えば大丈夫です。
@@ -991,8 +991,6 @@ OK
 
 
 
-# Lambdaにデプロイ
-
 ## ライブラリ関係
 
 現在のAPIは以下のようなライブラリを使っております
@@ -1004,9 +1002,289 @@ OK
 | numpy    | 約77MB | LightGBMの依存 |
 | scipy    | 約86MB | LightGBMの依存 |
 | pandas   | 約43MB | 前処理で使用   |
-| flask    | 約5MB  | API作成に利用  |
 
-AWS Lambdaでこういう外部ライブラリをLayerから読み込む場合，250MBが上限になるのですが，scipy, numpyが重いのでflaskを含めてちょうど250MBくらいになります。
+AWS Lambdaでこういう外部ライブラリをLayerから読み込む場合，250MBが上限になるのですが，scipy, numpyが重いのでflaskを含めて約242MB。Djangoだと約24MBあって250MBを超えてしまうので，ここはFlaskの軽量さが活きているなと感じました。
+
+
+
+# Lambdaにデプロイ
+
+
+
+## Lambda関数を作成
+
+AWS コンソールから作成します。
+
+
+
+## LambdaのLayerにパッケージを追加する
+
+ソースコードと一緒に直接アップロードできるのは50MBまでなので，NumpyやらScikit-learnやらを使っている今回のコードはその制約をオーバーしてしまいます。
+
+しかし，Layerとして別口でアップロードしておき，Lambda関数から読み込ませるようにする場合は250MBまで読み込めます。以下ではLayerを作っていきます。
+
+
+
+### 1. Amazon Linux2 OSのEC2インスタンスを立ち上げ，sshで接続する
+
+   - コンパイラ言語を利用しているライブラリはLambda（2019年からAmazon Linux2で動いている）と同じOSでインストールしたライブラリを使う必要があるようです
+     （[Python3.7ランタイムのAWS LambdaでC拡張ライブラリを使用したい！ - Qiita](https://qiita.com/rkhcx/items/999fe28b541334cd8464)）
+   - コンパイラ言語を使用していないライブラリ（例：tqdm）ならEC2じゃない場所で以下の2~4の作業を行えば大丈夫です。
+
+
+
+### 2. pip installしてzipにする
+
+```bash
+# python3のインストール
+sudo yum update -y
+sudo yum install python3-devel python3-libs python3-setuptools -y
+sudo python3 -m pip install --upgrade pip
+
+# numpyのzip化 -------------
+mkdir python
+pip3 install -t ./python/ numpy
+zip -r numpy.zip python
+rm -r python
+
+# scipyのzip化 -------------
+mkdir python
+pip3 install -t ./python/ scipy
+# numpyは別Layerにするので消す
+rm -r ./python/numpy*
+zip -r scipy.zip python
+rm -r python
+
+# pandasのzip化 ------------
+mkdir python
+pip3 install -t ./python/ pandas==0.25.3
+# numpyは別Layerにするので消す
+rm -r ./python/numpy*
+zip -r pandas.zip python
+rm -r python
+
+# sklearnのzip化 -----------
+mkdir python
+pip3 install -t ./python/ sklearn
+# numpy, scipyは別Layerにするので消す
+rm -r ./python/numpy* ./python/scipy*
+zip -r sklearn.zip python
+rm -r python
+
+# lightgbmのzip化 ----------
+mkdir python
+pip3 install -t ./python/ --no-deps lightgbm
+zip -r lightgbm.zip python
+rm -r python
+
+```
+
+
+
+### 3. zipをダウンロード
+
+```
+exit
+```
+
+でEC2を抜けたら
+
+```
+scp -i ~/.ssh/[pemファイル名].pem ec2-user@[IPv4]:~/*.zip .
+```
+
+のような感じでローカルにダウンロードします。
+
+
+
+### 4. zipをアップロード
+
+- AWSコンソール→Lambda→Layer→「レイヤーの作成」からzipをアップロードします
+
+  - レイヤー名はpythonコードでimportするときの名前にします
+
+
+
+### 5. Layerの追加
+
+AWSコンソールのLambda関数の画面から，作成中のAPIの関数に先程作成したLayerを追加します。
+
+（マージ順序は気にしなくて大丈夫です）
+
+![image-20200307205752813](機械学習モデルを動かすAPIを作ってみる.assets/image-20200307205752813.png)
+
+
+
+
+
+## APIのコードを修正
+
+Lambda用に修正してアップロードします。
+
+
+
+### コードの書き換え
+
+前回までのAPIのコードを，こんな感じに書き換えます。
+
+```python
+import pandas as pd
+import json
+import pickle
+from datetime import datetime
+import sys
+sys.path.append("./modules")  # 前処理で使った自作モジュール「pipeline」を読み込むためPYTHONPATHに追加
+
+# アプリ起動時に前処理パイプラインと予測モデルを読み込んでおく
+preprocess = pickle.load(open("modules/preprocess.pkl", "rb"))
+model = pickle.load(open("modules/model.pkl", "rb"))
+
+
+def predict(event, context):
+    """リクエストされたら予測値を返す関数"""
+    try:
+        # リクエストのbodyをjsonからdictに変換（API Gatewayのリクエスト形式に対応）
+        data = json.loads(event['body'])
+        # APIにJSON形式で送信された特徴量
+        X = pd.DataFrame(data, index=[0])
+        # 特徴量を追加
+        X["trade_date"] = datetime.now()
+        # 前処理
+        X = preprocess.transform(X)
+        # 予測
+        y_pred = model.predict(X, num_iteration=model.best_iteration_)
+        response = {"status": "OK", "predicted": y_pred[0]}
+        # レスポンスもbodyにjsonを入れる（API Gatewayの仕様に対応）
+        return {
+            "body": json.dumps(response),
+            "statusCode": 200
+        }
+    except Exception:
+        response = {"status": "Error", "message": "Invalid Parameters"}
+        return {
+            "body": json.dumps(response),
+            "statusCode": 400
+        }
+
+```
+
+このようなreturnにする理由は，API Gatewayにレスポンスを指示するためです。
+
+（参考：[API ゲートウェイでの「不正な Lambda プロキシ応答」または 502 エラーの解決](https://aws.amazon.com/jp/premiumsupport/knowledge-center/malformed-502-api-gateway/)）
+
+
+
+### zipファイルにしてアップロード
+
+予測モデルの.pklファイルなどとともにzipにしてAWSコンソールからアップロードし，「保存」を押します。
+
+
+
+### Lambdaの設定
+
+コードエディタのような画面がでてきたら「ハンドラ」部分を`ファイル名.関数名` の形にします。
+
+![image-20200307205032765](機械学習モデルを動かすAPIを作ってみる.assets/image-20200307205032765.png)
+
+また，その下に「基本設定」という部分があるので，メモリを引き上げておきます。
+
+今回の例では200MB程度あれば十分のはずです。
+
+![image-20200307205630997](機械学習モデルを動かすAPIを作ってみる.assets/image-20200307205630997.png)
+
+
+
+
+
+## API Gatewayの設定
+
+![image-20200307212220141](機械学習モデルを動かすAPIを作ってみる.assets/image-20200307212220141.png)
+
+
+
+## 動作確認
+
+### AWSコンソール上でテスト
+
+AWSコンソール上部でテストイベントを作成し，以下の値を入力します。
+
+```js
+{
+    "address": "東京都千代田区",
+    "area": 30,
+    "building_year": 2013
+}
+```
+
+テストイベントを保存したら「テスト」のボタンを押してテストします。
+
+以下のような画面になれば成功です。
+
+![image-20200307213050713](機械学習モデルを動かすAPIを作ってみる.assets/image-20200307213050713.png)
+
+
+
+### ローカルからテスト
+
+AWSコンソール上のAPI Gatewayの部分にAPIのエンドポイント（URL）とAPIキーがあるので，そこへPOSTリクエストを送ります。
+
+```python
+import unittest
+import requests
+import json
+
+
+class APITest(unittest.TestCase):
+    URL = "APIエンドポイント"
+    HEADERS = {"x-api-key": "APIキー"}
+    DATA = {
+        "address": "東京都千代田区",
+        "area": 30,
+        "building_year": 2013
+    }
+
+    def test_normal_input(self):
+        # リクエストを投げる
+        response = requests.post(self.URL, json=self.DATA, headers=HEADERS)
+        # 結果
+        print(response.text)  # 本来は不要だが，確認用
+        result = json.loads(response.text)  # JSONをdictに変換
+        # ステータスコードが200かどうか
+        self.assertEqual(response.status_code, 200)
+        # statusはOKかどうか
+        self.assertEqual(result["status"], "OK")
+        # 非負の予測値があるかどうか
+        self.assertTrue(0 <= result["predicted"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+```
+
+実行したところ，ちゃんと動きました
+
+```
+{"status": "OK", "predicted": 45833222.1903707}
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.398s
+
+OK
+```
+
+もちろんcurlコマンドでも検証できます。
+
+```sh
+curl https://xxxxxxxxxxxxxxxx.execute-api.ap-northeast-1.amazonaws.com/dev/test \
+-d '{"address": "東京都千代田区", "area": 30, "building_year": 2013}' \
+-H 'x-api-key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' \
+-v
+```
+
+```
+{"status": "OK", "predicted": 45833222.1903707}
+```
 
 
 
@@ -1015,6 +1293,10 @@ AWS Lambdaでこういう外部ライブラリをLayerから読み込む場合�
 
 
 # EC2にデプロイ
+
+## デプロイ
+
+ローカルで動くAPIができているので，それをアップロードすれば動きます
 
 
 

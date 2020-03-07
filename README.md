@@ -28,11 +28,11 @@ Herokuにデプロイする場合のファイル構成
 
 AWS lambda + API Gatewayでのデプロイ
 
+- plain
+  - Lambda関数だけを使うデプロイ
 - with_chalice
-  - chaliceでお手軽？デプロイ
-    （アプリ部分をFlaskからChaliceに書き換えることになるので言うほどお手軽かというと…）
-- with_flask
-  - Flaskでデプロイする
+  - chaliceでデプロイ
+    （アプリ部分をFlaskからChaliceに書き換えることになるのであまりお手軽感は無かった）
 
 
 
