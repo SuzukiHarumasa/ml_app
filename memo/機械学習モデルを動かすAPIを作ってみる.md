@@ -1198,6 +1198,8 @@ def predict(event, context):
 
 ## API Gatewayの設定
 
+REST APIにします
+
 ![image-20200307212220141](機械学習モデルを動かすAPIを作ってみる.assets/image-20200307212220141.png)
 
 
